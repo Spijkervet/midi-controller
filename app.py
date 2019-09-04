@@ -9,6 +9,10 @@ from flask_socketio import SocketIO, Namespace, emit, join_room, leave_room, \
 from flask_cors import CORS
 
 import mido
+import rtmidi
+import uuid
+
+import live
 
 # Set this variable to "threading", "eventlet" or "gevent" to test the
 # different async modes, or leave it set to None for the application to choose
@@ -24,6 +28,40 @@ CORS(app)
 thread = None
 thread_lock = Lock()
 
+
+
+users = {}
+
+class MidiOut():
+
+    def __init__(self, port_name):
+        self.port_name = port_name
+        # midiout = rtmidi.MidiOut()
+        # midiout.open_virtual_port(port_name)
+        self.port = mido.open_output(name=port_name, virtual=True)
+        print('MIDI port {} opened'.format(self.port_name))
+
+    def close(self):
+        print('MIDI port {} closed'.format(self.port_name))
+        self.port.close()
+
+class User():
+
+    def __init__(self, sid, name, port_name=None):
+        self.sid = sid
+        self.uuid = uuid.uuid4()
+        self.name = name
+        if port_name is None:
+            self.port_name = name
+        
+        self.midi_out = MidiOut(self.port_name)
+
+    def disconnect(self):
+        print('User disconnected')
+        self.midi_out.close()
+
+def get_user(sid):
+    return users[sid]
 
 def background_thread():
     """Example of how to send server generated events to clients."""
@@ -47,15 +85,15 @@ def index():
 
 class MyNamespace(Namespace):
     def on_midi_event(self, message):
-        
         print("MIDI MESSAGE RECEIVED", message)
 
+        user = get_user(request.sid)
         if 'raw' in message.keys():
             midi_data = message['raw']
             msg = mido.Message.from_bytes(midi_data)
-            print(midi_data, type(midi_data), msg)
+            print(user.name, 'sent:', midi_data, type(midi_data), msg)
             # msg.copy(channel=1)
-            port.send(msg)
+            user.midi_out.port.send(msg)
 
         # session['receive_count'] = session.get('receive_count', 0) + 1
         # emit('my_response', {'data': message['data'], 'count': session['receive_count']})
@@ -103,24 +141,36 @@ class MyNamespace(Namespace):
         emit('my_pong')
 
     def on_connect(self):
-        print('user connected')
         global thread
         with thread_lock:
             if thread is None:
                 thread = socketio.start_background_task(background_thread)
+        
+        user_name = 'Jane Wilde'
+        sid = request.sid
+        user = User(sid, user_name)
+        users[sid] = user
 
-        emit('on_connect', {'data': 'Connected', 'count': 0})
+        userDict = {
+            'uuid': str(user.uuid),
+            'userName': user.name,
+            'sid': user.sid
+        }
+        emit('on_connect', {'msg': 'Connected', 'user': userDict, 'tracks': [str(track) for track in set.tracks]})
 
     def on_disconnect(self):
         print('Client disconnected', request.sid)
+        if request.sid in users:
+            user = users[request.sid]
+            user.disconnect()
+            del users[request.sid]
 
 
 socketio.on_namespace(MyNamespace('/test'))
 
 if __name__ == '__main__':
-    import rtmidi
-    midiout = rtmidi.MidiOut()
-    midi_port_name = 'MIDISocketIO'
-    midiout.open_virtual_port(midi_port_name)
-    port = mido.open_output(name=midi_port_name, virtual=True)
-    socketio.run(app, host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True) # debug=True)
+    set = live.Set(address=("localhost", 9000))
+    set.scan(scan_clip_names = True, scan_devices = True)
+    track = set.tracks[0]
+    print("Track name %s" % track.name)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False) #os.environ.get('PORT', 80), debug=True) # debug=True)
