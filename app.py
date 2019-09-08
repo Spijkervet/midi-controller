@@ -28,8 +28,6 @@ CORS(app)
 thread = None
 thread_lock = Lock()
 
-
-
 users = {}
 
 class MidiOut():
@@ -61,7 +59,9 @@ class User():
         self.midi_out.close()
 
 def get_user(sid):
-    return users[sid]
+    if sid in users.keys():
+        return users[sid]
+    return None
 
 def background_thread():
     """Example of how to send server generated events to clients."""
@@ -72,8 +72,6 @@ def background_thread():
         socketio.emit('my_response',
                       {'data': 'Server generated event', 'count': count},
                       namespace='/test')
-
-
 @app.route('/')
 def index():
     root_dir = os.path.dirname(os.getcwd())
@@ -88,7 +86,7 @@ class MyNamespace(Namespace):
         print("MIDI MESSAGE RECEIVED", message)
 
         user = get_user(request.sid)
-        if 'raw' in message.keys():
+        if user and 'raw' in message.keys():
             midi_data = message['raw']
             msg = mido.Message.from_bytes(midi_data)
             print(user.name, 'sent:', midi_data, type(midi_data), msg)
@@ -145,9 +143,18 @@ class MyNamespace(Namespace):
         with thread_lock:
             if thread is None:
                 thread = socketio.start_background_task(background_thread)
-        
-        user_name = 'Jane Wilde'
+
+    def on_disconnect(self):
+        print('Client disconnected', request.sid)
+        if request.sid in users:
+            user = users[request.sid]
+            user.disconnect()
+            del users[request.sid]
+
+    def on_join_midi(self, data):
+        user_name = data['username']
         sid = request.sid
+
         user = User(sid, user_name)
         users[sid] = user
 
@@ -157,13 +164,7 @@ class MyNamespace(Namespace):
             'sid': user.sid
         }
         emit('on_connect', {'msg': 'Connected', 'user': userDict, 'tracks': [str(track) for track in set.tracks]})
-
-    def on_disconnect(self):
-        print('Client disconnected', request.sid)
-        if request.sid in users:
-            user = users[request.sid]
-            user.disconnect()
-            del users[request.sid]
+        emit('user_joined', { 'user': userDict })
 
 
 socketio.on_namespace(MyNamespace('/test'))
@@ -173,4 +174,4 @@ if __name__ == '__main__':
     set.scan(scan_clip_names = True, scan_devices = True)
     track = set.tracks[0]
     print("Track name %s" % track.name)
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False) #os.environ.get('PORT', 80), debug=True) # debug=True)
+    socketio.run(app, host='0.0.0.0', port=80, debug=False) #os.environ.get('PORT', 80), debug=True) # debug=True)

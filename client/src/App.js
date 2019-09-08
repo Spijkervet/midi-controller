@@ -1,11 +1,12 @@
 import React from 'react';
 import io from 'socket.io-client';
-import logo from './logo.svg';
 import ableton_logo from './ableton_logo.png';
 
 
 // Audio related components
 import AudioPad from './components/AudioPad'
+import UsernameForm from './components/UsernameForm';
+import UserList from './components/UserList'
 
 import { Piano, KeyboardShortcuts, MidiNumbers } from 'react-piano';
 import 'react-piano/dist/styles.css';
@@ -18,7 +19,7 @@ import WebMidi from 'webmidi';
 
 
 
-const socket = io('http://192.168.1.5:5000/test')
+const socket = io('/test')
 
 
 WebMidi.enable(function (err) {
@@ -29,8 +30,9 @@ WebMidi.enable(function (err) {
   }
 
   for (var input of WebMidi.inputs) {
-    console.log(input.id)
-    var input = WebMidi.getInputById(-549027294);
+    console.log(input.id, input.name)
+    var input = WebMidi.getInputById(input.id);//-549027294);
+    console.log(input)
     input.addListener('noteon', "all",
       function (e) {
         var channel = e.channel
@@ -63,6 +65,17 @@ WebMidi.enable(function (err) {
         // console.log("Received 'noteon' message (" + e.note.name + e.note.octave + ").");
       }
     );
+
+    input.addListener('controlchange', 'all', 
+      function (e) {
+
+        var channel = e.channel
+        socket.emit('midi_event', { 
+          raw: [e.data[0], e.data[1], e.data[2]],
+          channel: channel
+        });
+      
+      })
 
   }
   // console.log(WebMidi.outputs);
@@ -138,7 +151,6 @@ class Clock extends React.Component {
 }
 
 
-
 class App extends React.Component {
 
   constructor(props) {
@@ -157,6 +169,22 @@ class App extends React.Component {
     });
   }
 
+  joinMidi = name => {
+    this.setState({
+      userName: name
+    })
+
+    socket.emit('join_midi', { 
+      username: name
+    })
+  }
+
+
+  updateUsers = (user) => {
+    console.log('updating users')
+    console.log(user)
+  }
+
   componentDidMount() {
     socket.on('connect', function() {
       console.log('connected')
@@ -164,7 +192,7 @@ class App extends React.Component {
 
     socket.on('on_connect', (data) => {
 
-      console.log('connect data', data)
+      console.log('connect data!', data)
 
       this.setState({
         socketId: socket.id,
@@ -174,6 +202,10 @@ class App extends React.Component {
       
       socket.emit('my_event', {data: 'I\'m connected!'});
     })
+
+    socket.on('user_joined', (data) => {
+      this.updateUsers(data.user);
+    });
   }
 
   render() {
@@ -190,8 +222,13 @@ class App extends React.Component {
     <div className="App">
       <header className="App-header">
         <img src={ableton_logo} className="App-logo" alt="logo" />
-        <p>Username: {this.state.userName}</p>
+        <UsernameForm joinMidi = {this.joinMidi}/>
+        <p>{this.state.userName}</p>
         <code>UUID: {this.state.uuid}</code>
+
+        <div>
+          <UserList getUsers={this.getUsers}/>
+        </div>
 
          <div>
           <AudioPad midiEvent={this.sendMidiEvent} keyCode={36} keyUp={false} color={"#d127d1"} volume={0.3}>Kick</AudioPad>
